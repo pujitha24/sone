@@ -1326,6 +1326,7 @@ fn spawn_alsa_writer(
                 Ok((pcm, negotiated))
             }
 
+            #[must_use]
             fn drain_writer_rx(rx: &crossbeam_channel::Receiver<WriterCommand>) -> bool {
                 while let Ok(cmd) = rx.try_recv() {
                     if let WriterCommand::Shutdown = cmd { return true; }
@@ -1570,7 +1571,14 @@ fn spawn_alsa_writer(
                                     break; // back to main loop
                                 }
                                 Ok(WriterCommand::Shutdown) => break 'main,
-                                Ok(WriterCommand::Flush) => { drain_writer_rx(&rx); pcm.drop().ok(); pcm.prepare().ok(); pending_promotion_from = None; break; }
+                                Ok(WriterCommand::Flush) => {
+                                    let got_shutdown = drain_writer_rx(&rx);
+                                    pcm.drop().ok();
+                                    if got_shutdown { break 'main; }
+                                    pcm.prepare().ok();
+                                    pending_promotion_from = None;
+                                    break;
+                                }
                                 Ok(WriterCommand::FormatHint(new_fmt)) => {
                                     sp.set_decoded(&new_fmt.gst_format, new_fmt.sample_rate, new_fmt.channels);
                                     if new_fmt != current_fmt {
@@ -1624,8 +1632,9 @@ fn spawn_alsa_writer(
                     }
 
                     Ok(WriterCommand::Flush) => {
-                        drain_writer_rx(&rx);
+                        let got_shutdown = drain_writer_rx(&rx);
                         pcm.drop().ok();
+                        if got_shutdown { break 'main; }
                         pcm.prepare().ok();
                         pending_promotion_from = None;
                     }
